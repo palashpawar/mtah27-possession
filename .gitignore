@@ -1,0 +1,17 @@
+# Competition data is licensed for the competition only and must never be committed.
+data/*
+!data/README.md
+*.mp4
+
+# Public training data (re-downloadable with scripts/download_public_data.sh), caches, outputs
+external/
+cache/
+logs/
+evaluation/results/
+evaluation/reports/
+evaluation/scoreboard.csv
+
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
