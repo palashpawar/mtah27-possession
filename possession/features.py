@@ -12,6 +12,7 @@ INTERP_MAX = 50          # interpolate the ball across gaps up to 2 s
 NEAR = 3.0               # metres: "near the ball"
 CAP = 500                # frames: cap for time-since / time-until features
 WINDOWS = (12, 50, 125)  # half-widths, frames, for centred rolling summaries
+TOUCHES = True           # add touch / pass-chain features (possession/touches.py)
 
 # (home column, away column) pairs that swap when the teams do
 PAIRS = [("d_home", "d_away"), ("near_home", "near_away"), ("spd_home", "spd_away"),
@@ -150,6 +151,9 @@ def build(match):
         mean = roll.mean().add_suffix("_m{}".format(w))
         df = pd.concat([df, mean], axis=1)
         df["spd_all_min{}".format(w)] = df["spd_all"].rolling(2 * w + 1, center=True, min_periods=1).min()
+    if TOUCHES:
+        from possession import touches
+        df = pd.concat([df, pd.DataFrame(touches.features(match))], axis=1)
     return df.astype(np.float32)
 
 
@@ -158,9 +162,10 @@ SIGNED = ["closer", "dd"] + ["closer_m{}".format(w) for w in WINDOWS] + ["dd_m{}
 
 def swap_teams(df):
     """The same frames seen with home and away exchanged."""
+    from possession.touches import SIGNED as TOUCH_SIGNED
     out = df.copy()
     for a, b in PAIRS:
         out[a], out[b] = df[b].values, df[a].values
-    for c in SIGNED:
+    for c in SIGNED + [c for c in TOUCH_SIGNED if c in df]:
         out[c] = -df[c]
     return out

@@ -1,6 +1,6 @@
 """Train on all ten public matches (Metrica samples + IDSSE) and label the competition match.
 
-    .venv/bin/python -m possession.make_submission            # -> evaluation/results/possession_v4.csv
+    .venv/bin/python -m possession.make_submission            # -> evaluation/results/possession_v5.csv
 
 Deterministic: the same data and code reproduce the same file. Prints aggregates only.
 """
@@ -17,7 +17,7 @@ from possession.data import ROOT, load_competition
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # Chosen by 5-fold cross-validation over the ten public matches (possession/crossval_all.py).
-COST_TEAM = 20
+COST_TEAM = 10
 COST_DEAD = 40
 STRIDE = 3
 # Smart Tagging evidence (w_dead, dead_s, w_live), fitted on simulated tags (possession/tag_crossval.py).
@@ -27,7 +27,7 @@ LETTERS = np.array(["H", "A", "D", "X"])
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--name", default="possession_v4")
+    ap.add_argument("--name", default="possession_v5")
     ap.add_argument("--no-tags", action="store_true", help="decode without Smart Tagging")
     args = ap.parse_args()
 

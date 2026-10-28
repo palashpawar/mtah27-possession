@@ -29,7 +29,7 @@ COST_DEAD = (20, 40, 80)
 def score(gt, pred):
     r = pm.evaluate(gt, pred, bootstrap_n=0)
     return (r["spell_f1_mean"], r["macro_f1"], r["n_pred_spells"], r["n_gt_spells"],
-            r["per_class"]["D"]["f1"])
+            r["per_class"]["D"]["f1"], r["transitions"][25]["f1"])
 
 
 def baseline(m, window):

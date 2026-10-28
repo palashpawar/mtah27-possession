@@ -12,11 +12,12 @@ was used to check that frames and labels line up, never to train, tune or choose
 ## Reproduce the submission
 
 ```bash
-python3 -m venv .venv          # Python 3.9 && .venv/bin/pip install -r requirements.txt
+python3 -m venv .venv                                    # Python 3.9
+.venv/bin/pip install -r requirements.txt
 PATH=.venv/bin:$PATH scripts/download_public_data.sh     # ~2.8 GB of public training matches
 # put the competition match in data/ -- see data/README.md
-.venv/bin/python -m possession.make_submission           # -> evaluation/results/possession_v4.csv
-.venv/bin/python evaluation/validate_submission.py evaluation/results/possession_v4.csv
+.venv/bin/python -m possession.make_submission           # -> evaluation/results/possession_v5.csv
+.venv/bin/python evaluation/validate_submission.py evaluation/results/possession_v5.csv
 ```
 
 The build is deterministic (fixed seeds, pinned versions): it regenerates the submitted file byte
@@ -46,7 +47,12 @@ roughened to match **unlabelled aggregate statistics** of the competition tracki
 - ball visibility and gap structure, and ball speed;
 - distance from the ball to the nearest player of each side, and players within 3 / 9.15 / 20 m;
 - player speeds, the ball's distance off the pitch and to restart spots (centre, corners, penalty spots), and how long the ball has been still;
-- centred rolling summaries of all of these.
+- centred rolling summaries of all of these;
+- **touches and pass chains** (`touches.py`): a touch is the ball changing direction (> 35°) or
+  speed (> 4 m/s) with a player within 1.5 m, or staying at a player's feet for 0.4 s. Consecutive
+  same-team touches form a chain, and two in a row (or one long touch) count as control, following
+  the challenge's definition of controlled possession. Features: which team touched last and next,
+  how long ago, chain length, which team last had control, and the touch balance over ±2 s.
 
 Features and labels are mirrored (home ↔ away) during training and averaged at prediction, so the
 model has no home/away bias.
@@ -56,7 +62,7 @@ tracking (the first ball strike after the tag starts), and the 20 s before it ar
 `D`. The weight was fitted on simulated tags built from the public matches' real restarts.
 
 **5. Decoder** (`model.viterbi`). A Viterbi pass over H/A/D with a fixed cost for every change of
-team (20) and every alive↔dead change (40). This is what turns flickering frame guesses into whole
+team (10) and every alive↔dead change (40). This is what turns flickering frame guesses into whole
 possessions, which is what `spellF1` rewards.
 
 ## Validation
@@ -67,7 +73,7 @@ scored with the organisers' own metric library. Held-out matches are scored clea
 | | spellF1, all held-out | degraded only | dead-ball F1, degraded |
 |---|---|---|---|
 | Repository baseline (nearest player, ±2 s vote), Metrica games | 0.32 | 0.24 | – |
-| This model, final configuration | **0.589** | **0.539** | **0.869** |
+| This model, final configuration | **0.663** | **0.605** | **0.871** |
 
 The repository baseline scores 0.24 on degraded held-out matches, close to its official full-match
 score (0.2433), which suggests the degradation is realistic.
@@ -80,8 +86,9 @@ How each step was decided:
 | Add the 7 IDSSE matches | 0.483 → 0.591 |
 | Smart Tagging dead-ball nudge | dead F1 0.654 → 0.699, spellF1 flat |
 | Degradation matched to the competition ATD | 0.549 → 0.589 (degraded 0.464 → 0.539) |
+| Touch and pass-chain features | 0.589 → 0.663 (Metrica held-out 0.518 → 0.594; transition F1 0.53 → 0.60, degraded) |
 
-On the full competition match the model predicts 272 possessions of mean 14.8 s and 37% dead ball.
+On the full competition match the model predicts 292 possessions of mean 13.7 s and 37% dead ball.
 Typical professional matches have 40–45% dead time, and frames predicted dead look like truly dead
 frames in the public matches (players near-stationary, ~1 m/s vs ~2 m/s in play)
 (`possession/diag_dead.py`).
@@ -98,7 +105,7 @@ data/              competition data goes here; never committed
 
 Exploratory scripts kept for transparency: `describe.py` and `inspect_schema.py` (aggregate data
 summaries), `profile_tags.py` (tracking around Smart Tagging set pieces), `crossval.py` and
-`tag_crossval.py` (the earlier validation stages), and `diag_dead.py`. All of them print aggregates
+`tag_crossval.py` (the earlier validation stages), `diag_dead.py` and `check_touches.py`. All of them print aggregates
 only.
 
 ## Data and attribution
