@@ -1,116 +1,54 @@
-# Ball possession from automatic tracking: More than a Hack 2027
+# Ball possession from automatic tracking
 
-An entry for [More than a Hack 2027, Phase 1](https://github.com/metrica-sports/more-than-a-hack-2027):
-label every frame of FC Barcelona vs Athletic Club `H`, `A` or `D` from automatic, uncorrected
-tracking, ranked on possession-level F1 (`spellF1`).
+Entry for [More than a Hack 2027](https://github.com/metrica-sports/more-than-a-hack-2027): label every
+frame of FC Barcelona vs Athletic Club `H`, `A` or `D` from automatic tracking.
 
-The model is a frame classifier trained only on **other matches**, followed by a decoder that turns
-per-frame probabilities into whole possessions. Every modelling choice was made by cross-validation
-on those matches. The competition match is only ever predicted. Its public 5-minute ground truth
-was used to check that frames and labels line up, never to train, tune or choose between versions.
+A classifier trained on ten **other** public matches labels each frame; a decoder joins the frames
+into whole possessions. The competition match is only ever predicted. Its public 5-minute ground
+truth was used to check alignment, never to train or tune.
 
-## Reproduce the submission
+## Reproduce
 
 ```bash
 python3 -m venv .venv                                    # Python 3.9
 .venv/bin/pip install -r requirements.txt
-PATH=.venv/bin:$PATH scripts/download_public_data.sh     # ~2.8 GB of public training matches
-# put the competition match in data/ -- see data/README.md
+PATH=.venv/bin:$PATH scripts/download_public_data.sh     # ~2.8 GB of public matches
+# put the competition match in data/ (see data/README.md)
 .venv/bin/python -m possession.make_submission           # -> evaluation/results/possession_v5.csv
-.venv/bin/python evaluation/validate_submission.py evaluation/results/possession_v5.csv
 ```
 
-The build is deterministic (fixed seeds, pinned versions): it regenerates the submitted file byte
-for byte. It takes about 10 minutes on a laptop, most of it parsing the tracking once (cached in
-`cache/`).
+Deterministic: it regenerates the submitted file byte for byte (about 10 minutes).
 
 ## Method
 
-**1. Training data: ten public matches, none of them the competition match.**
-
-| Source | Matches | Labels |
-|---|---|---|
-| [Metrica Sports sample data](https://github.com/metrica-sports/sample-data) | 3 | Derived from the event data (`possession/event_labels.py`): a controlling action (pass, carry, recovery, shot, set piece, ball lost) gives its team the ball; challenges change nothing; a ball out, foul or goal is dead until the next set piece. |
-| [IDSSE](https://huggingface.co/datasets/pysport/idsse-data), DFL Bundesliga 2022/23 | 7 | Read from the tracking's own per-frame `BallStatus` and `BallPossession`, the same kind of derivation as the competition's ground truth. DFL possession flips at almost every touch, so spells shorter than 2 s are handed back to the previous team (`possession/smooth_labels.py`). That matches the challenge's "controlled possession" rule and makes spell lengths agree with the Metrica labels (mean 11.4 s vs 11–13 s). |
-
-**2. Make clean tracking look like the competition's automatic tracking** (`model.degrade`).
-The public matches have near-perfect tracking. The competition's has long ball losses during play,
-missing players, and a ball that is sometimes tracked through stoppages. Training copies are
-roughened to match **unlabelled aggregate statistics** of the competition tracking:
-- long ball gaps during live play (median ~270 frames, plus ~10% short blips), the same shape as the competition ATD's;
-- per stoppage, the ball randomly either blanked or shown resting where it left play, carried back, and sitting on the restart spot;
-- player dropouts;
-- position error that drifts smoothly. Per-frame jitter would fake running speed, a key stoppage cue.
-
-**3. Frame classifier** (`features.py`, `model.py`). A gradient-boosted classifier
-(scikit-learn `HistGradientBoostingClassifier`) gives P(H), P(A), P(D) from identity-free features:
-- ball visibility and gap structure, and ball speed;
-- distance from the ball to the nearest player of each side, and players within 3 / 9.15 / 20 m;
-- player speeds, the ball's distance off the pitch and to restart spots (centre, corners, penalty spots), and how long the ball has been still;
-- centred rolling summaries of all of these;
-- **touches and pass chains** (`touches.py`): a touch is the ball changing direction (> 35°) or
-  speed (> 4 m/s) with a player within 1.5 m, or staying at a player's feet for 0.4 s. Consecutive
-  same-team touches form a chain, and two in a row (or one long touch) count as control, following
-  the challenge's definition of controlled possession. Features: which team touched last and next,
-  how long ago, chain length, which team last had control, and the touch balance over ±2 s.
-
-Features and labels are mirrored (home ↔ away) during training and averaged at prediction, so the
-model has no home/away bias.
-
-**4. Smart Tagging** (`tags.py`). Each set-piece tag marks a restart. The restart is located in the
-tracking (the first ball strike after the tag starts), and the 20 s before it are nudged towards
-`D`. The weight was fitted on simulated tags built from the public matches' real restarts.
-
-**5. Decoder** (`model.viterbi`). A Viterbi pass over H/A/D with a fixed cost for every change of
-team (10) and every alive↔dead change (40). This is what turns flickering frame guesses into whole
-possessions, which is what `spellF1` rewards.
+1. **Training data.** 3 [Metrica sample](https://github.com/metrica-sports/sample-data) matches
+   (labels from events) and 7 [IDSSE](https://huggingface.co/datasets/pysport/idsse-data) DFL
+   matches (labels from the tracking's own dead/possession flags).
+2. **Realistic tracking.** Training copies are roughened to match unlabelled statistics of the
+   competition tracking: long ball losses, a ball sometimes tracked through stoppages, missing
+   players, smooth position error (`model.degrade`).
+3. **Frame classifier.** Gradient boosting on 74 identity-free features: ball visibility and speed,
+   distance to the nearest player of each side, player speeds, and touches. Two same-team touches
+   in a row count as control, following the challenge's definition (`features.py`, `touches.py`).
+4. **Smart Tagging.** The 20 s before each tagged restart are nudged towards `D` (`tags.py`).
+5. **Decoder.** A Viterbi pass charges a cost for each change of team (10) or of alive/dead state
+   (40), turning frame guesses into whole possessions (`model.viterbi`).
 
 ## Validation
 
-5-fold cross-validation over the ten public matches, two held out per fold (`possession/crossval_all.py`),
-scored with the organisers' own metric library. Held-out matches are scored clean and degraded.
+5-fold cross-validation over the ten public matches, scored with the organisers' metric code
+(`possession/crossval_all.py`).
 
-| | spellF1, all held-out | degraded only | dead-ball F1, degraded |
-|---|---|---|---|
-| Repository baseline (nearest player, ±2 s vote), Metrica games | 0.32 | 0.24 | – |
-| This model, final configuration | **0.663** | **0.605** | **0.871** |
+| | spellF1 | spellF1, degraded tracking |
+|---|---|---|
+| Repository baseline | 0.32 | 0.24 |
+| This model | **0.663** | **0.605** |
 
-The repository baseline scores 0.24 on degraded held-out matches, close to its official full-match
-score (0.2433), which suggests the degradation is realistic.
+On the competition match: 292 possessions of mean 13.7 s, 37% of frames dead.
 
-How each step was decided:
+## Data and licences
 
-| Change | Evidence (cross-validation) |
-|---|---|
-| Show the ball through stoppages | degraded spellF1 0.411 → 0.475 |
-| Add the 7 IDSSE matches | 0.483 → 0.591 |
-| Smart Tagging dead-ball nudge | dead F1 0.654 → 0.699, spellF1 flat |
-| Degradation matched to the competition ATD | 0.549 → 0.589 (degraded 0.464 → 0.539) |
-| Touch and pass-chain features | 0.589 → 0.663 (Metrica held-out 0.518 → 0.594; transition F1 0.53 → 0.60, degraded) |
-
-On the full competition match the model predicts 292 possessions of mean 13.7 s and 37% dead ball.
-Typical professional matches have 40–45% dead time, and frames predicted dead look like truly dead
-frames in the public matches (players near-stationary, ~1 m/s vs ~2 m/s in play)
-(`possession/diag_dead.py`).
-
-## Repository
-
-```
-possession/        the method (entry point: make_submission.py)
-scripts/           public-data download
-games.py, evaluation/, starter/load_smart_tagging.py
-                   the organisers' MIT-licensed code, unchanged (see third_party/)
-data/              competition data goes here; never committed
-```
-
-Exploratory scripts kept for transparency: `describe.py` and `inspect_schema.py` (aggregate data
-summaries), `profile_tags.py` (tracking around Smart Tagging set pieces), `crossval.py` and
-`tag_crossval.py` (the earlier validation stages), `diag_dead.py` and `check_touches.py`. All of them print aggregates
-only.
-
-## Data and attribution
-
-- **Competition data** © its owners, licensed for More than a Hack 2027 only. It is not included and not redistributed.
-- **Metrica Sports sample data**: [github.com/metrica-sports/sample-data](https://github.com/metrica-sports/sample-data).
-- **IDSSE**: Bassek, M., Rein, R., Weber, H. & Memmert, D. (2025). *An integrated dataset of spatiotemporal and event data in elite soccer.* Scientific Data. CC BY 4.0. Mirror: huggingface.co/datasets/pysport/idsse-data.
-- **Organisers' code** (scorer, frame alignment, Smart Tagging loader): MIT, © Metrica Sports. See `third_party/`.
+- Competition data: licensed for the competition only; not included.
+- Metrica sample data: [metrica-sports/sample-data](https://github.com/metrica-sports/sample-data).
+- IDSSE: Bassek, Rein, Weber & Memmert (2025), *Scientific Data*, CC BY 4.0.
+- `games.py`, `evaluation/`, `starter/load_smart_tagging.py`: the organisers' MIT code, unchanged (see `third_party/`).
